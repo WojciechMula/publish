@@ -408,6 +408,11 @@ class RawSourceImage:
     @property
     def large(self):
         p = self.path
+        for suffix in ['.JPG', '.jpg']:
+            p1 = p.with_suffix(suffix)
+            if p1.exists():
+                return p1
+
         return p.with_suffix(".JPG")
 
     @property
