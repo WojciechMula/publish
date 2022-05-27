@@ -252,8 +252,9 @@ class Directory:
             if backup.exists():
                 continue
 
-            log.info(f"Adding hardlink to {source.path} at {backup}")
-            source.path.link_to(backup)
+            src = Path(os.path.realpath(source.path))
+            log.info(f"Adding hardlink to {src} at {backup}")
+            backup.hardlink_to(src)
 
 
     def __add_missing_subdirs(self):
