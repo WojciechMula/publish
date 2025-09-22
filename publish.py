@@ -6,6 +6,7 @@ import logging
 import argparse
 import subprocess
 import re
+import concurrent.futures
 from pathlib import Path
 from itertools import chain
 
@@ -264,36 +265,31 @@ class Directory:
 
 
     def __create_missing_small_images(p):
-        SMALL_JPEG_WIDTH = 1024 # in pixels
-
         CREATE = 1
         UPDATE = 2
 
-        for source in p.sources:
-            large, small = source.large, source.small
-            if not large.exists():
-                continue
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            tasks = []
+            for source in p.sources:
+                large, small = source.large, source.small
+                if not large.exists():
+                    continue
 
-            action = None
-            if small.exists():
-                if small.stat().st_mtime < large.stat().st_mtime:
-                    action = UPDATE
-            else:
-                action = CREATE
+                action = None
+                if small.exists():
+                    if small.stat().st_mtime < large.stat().st_mtime:
+                        action = UPDATE
+                else:
+                    action = CREATE
 
-            if action is None:
-                continue
+                if action is None:
+                    continue
 
-            if action == CREATE:
-                log.info("Creating %s from %s", small, large)
-            else:
-                log.info("Updating %s from %s", small, large)
+                future = executor.submit(create_small, action, small, large)
+                tasks.append(future)
 
-            cmd = f'convert -verbose "{large}" -resize {SMALL_JPEG_WIDTH}x "{small}"'
-            ret = os.system(cmd)
-            if ret != 0:
-                log.error(cmd)
-                log.error(f'the above command failed with error code {ret}')
+            for future in tasks:
+                future.result()
 
 
     def __add_new_small_files(p):
@@ -400,6 +396,25 @@ class Directory:
             new = all_small - managed_small
             if new:
                 yield subdir, new
+
+
+CREATE = 1
+UPDATE = 2
+SMALL_JPEG_WIDTH = 1280 # in pixels
+
+
+def create_small(action, small, large):
+    if action == CREATE:
+        log.info("Creating %s from %s", small, large)
+    else:
+        assert action == UPDATE
+        log.info("Updating %s from %s", small, large)
+
+    cmd = f'convert -verbose "{large}" -resize {SMALL_JPEG_WIDTH}x "{small}"'
+    ret = os.system(cmd)
+    if ret != 0:
+        log.error(cmd)
+        log.error(f'the above command failed with error code {ret}')
 
 
 class RawSourceImage:
