@@ -58,9 +58,17 @@ class Application:
             p.action_fixup(self.git)
 
     def action_print_missing(self):
+        tmp = []
         for workdir in self.workdirs:
             p = Directory(workdir, self.args.services)
-            p.action_print_missing()
+            for path in p.action_print_missing():
+                tmp.append(path)
+
+        if tmp:
+            print("Missing JPGs")
+            tmp.sort()
+            for path in tmp:
+                print(f"* {path}")
 
     def action_backup_source_photos(self):
         for workdir in self.workdirs:
@@ -229,7 +237,7 @@ class Directory:
     def action_print_missing(self):
         for source in self.sources:
             if not source.large.exists():
-                print(source.path)
+                yield source.path
 
 
     def action_not_published(self, service):
