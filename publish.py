@@ -43,24 +43,30 @@ class Application:
         self.git  = git
 
     def run(self):
-        if self.args.action == ACTION_FIXUP:
-            self.action_fixup()
-        elif self.args.action == ACTION_MISSING:
-            self.action_print_missing()
-        elif self.args.action == ACTION_BACKUP:
-            self.action_backup_source_photos()
+        if self.args.action is None:
+            actions = known_actions
         else:
-            self.action_not_published(self.args.action)
+            actions = [self.args.action]
+
+        for action in actions:
+            if action == ACTION_FIXUP:
+                self.action_fixup()
+            elif action == ACTION_MISSING:
+                self.action_print_missing()
+            elif action == ACTION_BACKUP:
+                self.action_backup_source_photos()
+            else:
+                raise ValueError(f"unknown action {action}")
 
     def action_fixup(self):
         for workdir in self.workdirs:
-            p = Directory(workdir, self.args.services)
+            p = Directory(workdir)
             p.action_fixup(self.git)
 
     def action_print_missing(self):
         tmp = []
         for workdir in self.workdirs:
-            p = Directory(workdir, self.args.services)
+            p = Directory(workdir)
             for path in p.action_print_missing():
                 tmp.append(path)
 
@@ -72,12 +78,12 @@ class Application:
 
     def action_backup_source_photos(self):
         for workdir in self.workdirs:
-            p = Directory(workdir, self.args.services)
+            p = Directory(workdir)
             p.action_backup_source_photos()
 
     def action_not_published(self, service):
         for workdir in self.workdirs:
-            p = Directory(workdir, self.args.services)
+            p = Directory(workdir)
             p.action_not_published(service)
 
     @property
@@ -163,18 +169,12 @@ def parse_args(arguments=None):
         objects = {}
         exec(args.config.read_text(), objects)
 
-        args.services = objects.get('services', [])
         args.use_git = objects.get('git', False)
     except Exception as e:
         parser.error(f'{args.config} is invalid: {e}')
 
-    if not args.services:
-        parser.error(f'{args.config} does not define any services')
-
-    if args.action is None:
-        args.action = ACTION_FIXUP
-    elif args.action not in known_actions and args.action not in args.services:
-        tmp = ', '.join(chain(known_actions, args.services))
+    if args.action is not None and args.action not in known_actions:
+        tmp = ', '.join(known_actions)
         parser.error(f'action must be on of {tmp}')
 
     return args
@@ -202,9 +202,8 @@ SMALL_JPEG  = 4
 
 
 class Directory:
-    def __init__(self, rootdir, known_subdirs):
+    def __init__(self, rootdir):
         self.rootdir = rootdir
-        self.known_subdirs = known_subdirs
 
         self.sources = []
         for path in self.rootdir.glob('*'):
@@ -226,11 +225,8 @@ class Directory:
 
 
     def action_fixup(self, git):
-        self.__add_missing_subdirs()
         self.__create_missing_small_images()
-        self.__add_new_small_files()
         self.__fixup_source_photos_links()
-        self.__fixup_published_links()
         self.__add_files_to_repository(git)
 
 
@@ -238,16 +234,6 @@ class Directory:
         for source in self.sources:
             if not source.large.exists():
                 yield source.path
-
-
-    def action_not_published(self, service):
-        d = self.rootdir / service
-        if not d.exists():
-            return
-
-        for path in d.glob('*'):
-            if path.is_symlink():
-               print(path)
 
 
     def action_backup_source_photos(self):
@@ -264,12 +250,6 @@ class Directory:
             src = Path(os.path.realpath(source.path))
             log.info(f"Adding hardlink to {src} at {backup}")
             backup.hardlink_to(src)
-
-
-    def __add_missing_subdirs(self):
-        for path in self.missing_subdirs:
-            log.info("Adding directory %s", path)
-            path.mkdir()
 
 
     def __create_missing_small_images(p):
@@ -299,18 +279,6 @@ class Directory:
             for future in tasks:
                 future.result()
 
-
-    def __add_new_small_files(p):
-        for subdir, names in p.new_small_images:
-            for name in names:
-                log.info("Adding link to %s in %s", name, subdir.name)
-
-                link = subdir / name
-                target = Path('..') / name
-
-                link.symlink_to(target)
-
-
     def __fixup_source_photos_links(self):
         for source in self.sources:
             path = source.path
@@ -319,18 +287,6 @@ class Directory:
                 continue
 
             newlink = Path('..') / path.name
-            log.info(f"Replacing link {path} from {link} to {newlink}")
-            path.unlink()
-            path.symlink_to(newlink)
-
-
-    def __fixup_published_links(self):
-        for path in self.published_small:
-            link = Path(os.readlink(path))
-            if (path.parent / link).exists():
-                continue
-
-            newlink = Path('..') / Path('..') / path.name
             log.info(f"Replacing link {path} from {link} to {newlink}")
             path.unlink()
             path.symlink_to(newlink)
@@ -356,54 +312,11 @@ class Directory:
                 yield (large, small)
 
     @property
-    def missing_subdirs(self):
-        for subdir in self.known_subdirs:
-            path = self.rootdir / subdir
-            if not path.exists():
-                yield path
-
-            path = path / 'published'
-            if not path.exists():
-                yield path
-
-    @property
     def existing_small(self):
         for source in self.sources:
             small = source.small
             if small.exists():
                 yield small
-
-    @property
-    def published_small(self):
-        pattern = '*_small*'
-        for subdir in self.known_subdirs:
-            d = self.rootdir / subdir / 'published'
-            if not d.exists():
-                continue
-
-            yield from d.glob(pattern)
-
-    @property
-    def new_small_images(self):
-        all_small = {p.name for p in self.existing_small}
-        pattern = '*_small*'
-        for subdir in self.known_subdirs:
-            subdir = self.rootdir / subdir
-            if not subdir.exists():
-                continue
-
-            managed_small = set()
-            for path in subdir.glob(pattern):
-                managed_small.add(path.name)
-
-            d = subdir / 'published'
-            if d.exists():
-                for path in d.glob(pattern):
-                    managed_small.add(path.name)
-
-            new = all_small - managed_small
-            if new:
-                yield subdir, new
 
 
 CREATE = 1
