@@ -16,11 +16,11 @@ ACTION_MISSING = 'missing'
 ACTION_BACKUP = 'backup'
 
 
-known_actions = {
+known_actions = [
     ACTION_FIXUP,
     ACTION_MISSING,
     ACTION_BACKUP,
-}
+]
 
 class ProgramError(Exception):
     pass
